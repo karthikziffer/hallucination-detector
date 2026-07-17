@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fact Decompose + Answer Extractor Visualizer</title>
+<style>
+  :root {
+    /* Apple system-gray surfaces (light): grouped-background / secondary-grouped / fill */
+    --page:    #f5f5f7;
+    --surface: #ffffff;
+    --fill:    #f2f2f7;
+
+    /* Apple label hierarchy (light) */
+    --ink:    #1d1d1f;
+    --ink-2:  #6e6e73;
+    --ink-3:  #86868b;
+    --separator: rgba(0,0,0,0.08);
+
+    /* Apple systemBlue */
+    --accent: #0071e3;
+
+    /* Status */
+    --good:     #248a3d;
+    --critical: #d70015;
+
+    /* Categorical data colors -- real Apple System Colors, one per NER type */
+    --slot-1: #007aff; /* systemBlue    -> ORG / entity default */
+    --slot-2: #30b0c7; /* systemTeal    -> GPE */
+    --slot-3: #ffcc00; /* systemYellow  -> DATE */
+    --slot-4: #34c759; /* systemGreen   -> FAC/LOC/TIME/ORDINAL/LANGUAGE */
+    --slot-5: #5856d6; /* systemIndigo  -> NORP / question intent */
+    --slot-6: #ff2d55; /* systemPink    -> QUANTITY/CARDINAL/MONEY/PERCENT */
+    --slot-7: #af52de; /* systemPurple  -> PERSON */
+    --slot-8: #ff9500; /* systemOrange  -> WORK_OF_ART/PRODUCT/EVENT/LAW */
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: -apple-system, system-ui, "SF Pro Text", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { min-height: 100vh; }
+
+  .wrap {
+    max-width: 1420px;
+    margin: 0 auto;
+    padding: 40px 20px 100px;
+  }
+
+  .results-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 460px;
+    gap: 24px;
+    align-items: start;
+  }
+  .steps-col { min-width: 0; }
+  .graph-col { position: sticky; top: 20px; }
+  @media (max-width: 980px) {
+    .results-layout { grid-template-columns: 1fr; }
+    .graph-col { position: static; }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: none;
+    border-radius: 20px;
+    padding: 22px;
+    margin-bottom: 0;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.04);
+  }
+
+  .collapsible {
+    overflow: hidden;
+    max-height: 640px;
+    opacity: 1;
+    margin-bottom: 22px;
+    transition: max-height .45s cubic-bezier(.28,.11,.32,1), opacity .3s ease, margin-bottom .45s ease;
+  }
+  .collapsible.is-hidden {
+    max-height: 0;
+    opacity: 0;
+    margin-bottom: 0;
+    pointer-events: none;
+  }
+
+  .input-recap { padding: 15px 20px; }
+  .input-recap-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .input-recap-text { min-width: 0; }
+  .input-recap-label { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; margin-bottom: 3px; }
+  .input-recap-value {
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  label { display: block; font-size: 13px; color: var(--ink-2); margin-bottom: 7px; font-weight: 600; }
+  textarea, input[type=text] {
+    width: 100%;
+    background: var(--fill);
+    border: 1px solid transparent;
+    color: var(--ink);
+    border-radius: 12px;
+    padding: 11px 13px;
+    font-size: 15px;
+    font-family: inherit;
+    resize: vertical;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  textarea::placeholder, input::placeholder { color: var(--ink-3); }
+  textarea:focus, input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  .field { margin-bottom: 16px; }
+
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  button.primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 980px;
+    padding: 11px 22px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform .15s cubic-bezier(.28,.11,.32,1), filter .15s ease, opacity .15s ease;
+  }
+  button.primary:disabled { opacity: 0.45; cursor: default; }
+  @media (hover: hover) {
+    button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  }
+  button.primary:active:not(:disabled) { transform: scale(0.97); }
+
+  button.secondary {
+    background: var(--fill);
+    border: none;
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 8px 16px;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s ease, transform .15s cubic-bezier(.28,.11,.32,1);
+  }
+  button.secondary:hover { background: var(--separator); }
+  button.secondary:active { transform: scale(0.96); }
+
+  select.example-picker {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--fill) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="%236e6e73" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8l4 4 4-4"/></svg>') no-repeat right 12px center;
+    background-size: 16px;
+    border: none;
+    border-radius: 11px;
+    padding: 10px 34px 10px 16px;
+    font-size: 13.5px;
+    font-weight: 600;
+    font-family: inherit;
+    color: var(--ink);
+    cursor: pointer;
+    max-width: 100%;
+  }
+  select.example-picker:focus {
+    outline: none;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  @media (max-width: 640px) {
+    select.example-picker { width: 100%; }
+  }
+
+  .error-banner {
+    display: none;
+    background: color-mix(in srgb, var(--critical) 10%, var(--surface));
+    border: none;
+    color: var(--critical);
+    border-radius: 12px;
+    padding: 11px 15px;
+    font-weight: 500;
+    font-size: 13px;
+    margin-top: 12px;
+  }
+
+  #results { display: none; }
+
+  @keyframes stepIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .step {
+    position: relative;
+    padding-left: 46px;
+    margin-bottom: 30px;
+    animation: stepIn .5s cubic-bezier(.28,.11,.32,1) both;
+  }
+  .step::before {
+    content: "";
+    position: absolute;
+    left: 18px;
+    top: 36px;
+    bottom: -30px;
+    width: 1px;
+    background: var(--separator);
+  }
+  .step:last-child::before { display: none; }
+  .step-num {
+    position: absolute;
+    left: 0; top: 0;
+    width: 37px; height: 37px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14.5px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .step-title {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    margin: 7px 0 3px;
+    color: var(--ink);
+  }
+  .step-sub {
+    display: block;
+    font-size: 14px;
+    color: var(--ink-2);
+    font-weight: 400;
+    line-height: 1.45;
+    max-width: 56ch;
+    margin: 0 0 14px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: none;
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .card + .card { margin-top: 8px; }
+  .step:nth-child(1)  { animation-delay: .00s; }
+  .step:nth-child(2)  { animation-delay: .04s; }
+  .step:nth-child(3)  { animation-delay: .08s; }
+  .step:nth-child(4)  { animation-delay: .12s; }
+  .step:nth-child(5)  { animation-delay: .16s; }
+  .step:nth-child(6)  { animation-delay: .20s; }
+  .step:nth-child(7)  { animation-delay: .24s; }
+  .step:nth-child(8)  { animation-delay: .28s; }
+  .step:nth-child(9)  { animation-delay: .32s; }
+
+  .sentence-text { font-size: 15px; line-height: 1.7; color: var(--ink); }
+  mark.ent {
+    background: color-mix(in srgb, var(--ent-color) 18%, transparent);
+    padding: 1px 3px;
+    border-radius: 5px;
+    box-shadow: inset 0 -1.5px 0 var(--ent-color);
+    color: var(--ink);
+    cursor: default;
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 16px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); font-weight: 500; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot-color); }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 11px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    background: color-mix(in srgb, var(--chip-color, var(--ink-3)) 14%, var(--surface));
+    color: color-mix(in srgb, var(--chip-color, var(--ink-2)) 78%, var(--ink));
+  }
+  .chip.plain { background: var(--fill); font-weight: 500; color: var(--ink-2); }
+
+  .triple-flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+  .triple-arrow { color: var(--ink-3); font-size: 12.5px; white-space: nowrap; }
+  .attr-row { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .fact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+  .fact-card h4 { margin: 0 0 9px; font-size: 14.5px; font-weight: 600; color: var(--ink); }
+  .fact-attr { margin-bottom: 7px; }
+  .fact-attr .type-badge { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; margin-right: 6px; }
+  .fact-values { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+
+  .vs-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .vs-box {
+    flex: 1; min-width: 160px;
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 15px;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .vs-divider { color: var(--ink-3); font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+
+  .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 8px; }
+  .meta-label { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; font-weight: 600; }
+  .meta-value { font-size: 15px; font-weight: 600; color: var(--ink); }
+  .meta-sub { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; }
+
+  .bar-track {
+    height: 5px; border-radius: 3px;
+    background: var(--fill);
+    overflow: hidden;
+    margin-top: 7px;
+  }
+  .bar-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .3s cubic-bezier(.28,.11,.32,1); }
+
+  .link-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 11px 0; border-top: 1px solid var(--separator);
+  }
+  .link-row:first-of-type { border-top: none; }
+  .link-name { font-weight: 600; font-size: 14px; min-width: 140px; color: var(--ink); }
+  .link-arrow { color: var(--ink-3); }
+  .link-target { font-size: 14px; color: var(--ink); }
+  .no-match { color: var(--critical); font-size: 13.5px; font-weight: 600; }
+
+  .compare-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .compare-label { width: 170px; font-size: 13.5px; font-weight: 600; flex-shrink: 0; color: var(--ink); }
+  .compare-track { flex: 1; height: 16px; background: var(--fill); border-radius: 5px; overflow: hidden; }
+  .compare-fill { height: 100%; border-radius: 5px 0 0 5px; transition: width .3s cubic-bezier(.28,.11,.32,1); }
+  .compare-value { width: 70px; text-align: right; font-size: 13.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  .final-card {
+    border-radius: 18px;
+    padding: 22px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .final-card.good { background: color-mix(in srgb, var(--good) 10%, var(--surface)); }
+  .final-card.critical { background: color-mix(in srgb, var(--critical) 8%, var(--surface)); }
+  .final-icon-badge {
+    flex-shrink: 0;
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .final-card.good .final-icon-badge { background: var(--good); }
+  .final-card.critical .final-icon-badge { background: var(--critical); }
+  .final-icon-badge svg { width: 22px; height: 22px; color: #fff; }
+  .final-title { font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-2); margin-bottom: 4px; font-weight: 600; }
+  .final-answer { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+  .final-reason { font-size: 14px; color: var(--ink-2); margin-top: 4px; }
+
+  .empty-note { color: var(--ink-3); font-size: 13.5px; font-style: normal; }
+
+  .graph-panel { padding: 20px; }
+  .graph-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .graph-panel-title { font-size: 17px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); }
+  .graph-panel-sub { font-size: 12px; color: var(--ink-3); font-weight: 400; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-left: 6px; }
+  button.reset-view {
+    background: var(--fill);
+    border: none;
+    color: var(--ink-2);
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s ease;
+  }
+  button.reset-view:hover { background: var(--separator); }
+
+  .graph-legend { display: flex; flex-wrap: wrap; gap: 13px; margin: 12px 0 12px; font-size: 11.5px; color: var(--ink-2); }
+  .graph-legend .legend-item { display: flex; align-items: center; gap: 5px; font-weight: 500; }
+  .legend-swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .legend-swatch.circle { border-radius: 50%; }
+  .legend-swatch.diamond { transform: rotate(45deg); border-radius: 3px; width: 9px; height: 9px; }
+  .legend-line { width: 18px; height: 0; border-top: 2px solid var(--ink-3); display: inline-block; vertical-align: middle; }
+  .legend-line.dashed { border-top-style: dashed; }
+
+  .cy-wrap {
+    position: relative;
+    background: var(--fill);
+    border: none;
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  #cy { width: 100%; height: 560px; display: block; }
+  .cy-tooltip {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+    background: var(--ink);
+    color: var(--surface);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 10px;
+    border-radius: 7px;
+    white-space: nowrap;
+    z-index: 5;
+    transform: translate(-50%, -130%);
+  }
+  .cy-hint { font-size: 12px; color: var(--ink-3); margin-top: 10px; text-align: center; }
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    display: inline-block;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -2px;
+    margin-right: 6px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .step { animation: none; }
+    .spinner { animation-duration: 1.4s; }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="collapsible" id="inputPanelWrap">
+    <div class="panel">
+      <div class="field">
+        <label for="knowledge">Knowledge / context paragraph</label>
+        <textarea id="knowledge" rows="4" placeholder="Paste one or more sentences of source text..."></textarea>
+      </div>
+      <div class="field">
+        <label for="question">Question</label>
+        <input type="text" id="question" placeholder="e.g. Which magazine was started first, X or Y?">
+      </div>
+      <div class="row">
+        <button class="primary" id="analyzeBtn" type="button">Analyze</button>
+        <select class="example-picker" id="exampleSelect" aria-label="Load an example">
+          <option value="">Load an example&hellip;</option>
+        </select>
+      </div>
+      <div class="error-banner" id="errorBanner"></div>
+    </div>
+  </div>
+
+  <div class="collapsible is-hidden" id="inputRecapWrap">
+    <div class="panel input-recap">
+      <div class="input-recap-row">
+        <div class="input-recap-text">
+          <div class="input-recap-label">Question</div>
+          <div class="input-recap-value" id="recapQuestion"></div>
+        </div>
+        <button class="secondary" id="editInputsBtn" type="button">Edit</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="results" class="results-layout">
+    <div class="steps-col" id="stepsCol"></div>
+    <div class="graph-col">
+      <div class="panel graph-panel">
+        <div class="graph-panel-head">
+          <div><span class="graph-panel-title">The map of what it found</span><span class="graph-panel-sub">how your question connects to the facts</span></div>
+          <button class="reset-view" id="resetViewBtn" type="button">Reset view</button>
+        </div>
+        <div id="graphLegend"></div>
+        <div class="cy-wrap">
+          <div id="cy"></div>
+          <div class="cy-tooltip" id="cyTooltip"></div>
+        </div>
+        <div class="cy-hint">Drag to pan &middot; scroll/pinch to zoom &middot; hover a node for details</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/vendor/cytoscape.min.js"></script>
+<script>
+// Slot -> Apple System Color: 1 blue, 2 teal, 3 yellow, 4 green, 5 indigo, 6 pink, 7 purple, 8 orange
+const ENTITY_SLOT = {
+  ORG: 1, GPE: 2, DATE: 3, PERSON: 7, NORP: 5,
+  QUANTITY: 6, CARDINAL: 6, MONEY: 6, PERCENT: 6,
+  WORK_OF_ART: 8, PRODUCT: 8, EVENT: 8, LAW: 8,
+  FAC: 4, LOC: 4, TIME: 4, ORDINAL: 4, LANGUAGE: 4,
+};
+function slotFor(label) { return ENTITY_SLOT[label] || 8; }
+function colorVar(label) { return `var(--slot-${slotFor(label)})`; }
+
+// Plain-language names for spaCy's NER labels, so the UI never shows a bare
+// acronym like "NORP" or "GPE" to someone who hasn't read the Python source.
+const LABEL_NAMES = {
+  ORG: "Organization", GPE: "Place", DATE: "Date", PERSON: "Person", NORP: "Nationality / group",
+  QUANTITY: "Quantity", CARDINAL: "Number", MONEY: "Money", PERCENT: "Percent",
+  WORK_OF_ART: "Title / work", PRODUCT: "Product", EVENT: "Event", LAW: "Law",
+  FAC: "Facility", LOC: "Location", TIME: "Time", ORDINAL: "Ordinal", LANGUAGE: "Language",
+};
+function prettyLabel(label) { return LABEL_NAMES[label] || label; }
+function pct(x) { return x === null || x === undefined ? "n/a" : `${Math.round(x * 100)}%`; }
+
+function esc(s) {
+  if (s === null || s === undefined) return "";
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function chip(text, colorVarStr, plain) {
+  const style = plain ? "" : ` style="--chip-color:${colorVarStr}"`;
+  const cls = plain ? "chip plain" : "chip";
+  return `<span class="${cls}"${style}>${esc(text)}</span>`;
+}
+
+// ---- Step 1: sentence + NER highlight ----
+function renderEntitiesStep(sentenceFacts) {
+  const usedLabels = new Set();
+  sentenceFacts.forEach(sf => sf.entities.forEach(e => usedLabels.add(e.label)));
+
+  let legend = "";
+  if (usedLabels.size) {
+    legend = '<div class="legend">' + [...usedLabels].sort().map(l =>
+      `<span class="legend-item"><span class="legend-dot" style="--dot-color:${colorVar(l)}"></span>${esc(prettyLabel(l))}</span>`
+    ).join("") + "</div>";
+  }
+
+  const cards = sentenceFacts.map(sf => {
+    let html = esc(sf.sentence);
+    // Replace entity substrings with highlighted marks (longest-first to avoid partial overlaps)
+    const ents = [...sf.entities].sort((a, b) => b.text.length - a.text.length);
+    ents.forEach(e => {
+      const escText = esc(e.text);
+      const idx = html.indexOf(escText);
+      if (idx !== -1) {
+        const markup = `<mark class="ent" style="--ent-color:${colorVar(e.label)}" title="${esc(prettyLabel(e.label))}">${escText}</mark>`;
+        html = html.slice(0, idx) + markup + html.slice(idx + escText.length);
+      }
+    });
+    return `<div class="card"><div class="sentence-text">${html}</div></div>`;
+  }).join("");
+
+  return legend + (cards || '<p class="empty-note">No sentences found.</p>');
+}
+
+// ---- Step 2: triples ----
+function renderTriplesStep(sentenceFacts) {
+  const blocks = sentenceFacts.map(sf => {
+    if (!sf.triples.length) {
+      return `<div class="card"><div class="sentence-text" style="opacity:.7">${esc(sf.sentence)}</div><p class="empty-note">No clause triples extracted.</p></div>`;
+    }
+    const triples = sf.triples.map(t => {
+      const preps = t.prepositions.map(p => chip(`${p.prep} ${p.object}`, "var(--ink-3)", true)).join(" ");
+      const attrEntries = Object.entries(t.attributes || {});
+      const attrs = attrEntries.map(([type, vals]) =>
+        chip(`${prettyLabel(type)}: ${vals.join(", ")}`, colorVar(type))
+      ).join(" ");
+      return `
+        <div class="card">
+          <div class="triple-flow">
+            ${chip(t.subject || "?", "var(--slot-1)")}
+            <span class="triple-arrow">&mdash;${esc(t.predicate)}&rarr;</span>
+            ${chip(t.object || "(none)", "var(--slot-2)")}
+            ${preps}
+            ${t.agent ? `<span class="triple-arrow">by</span>${chip(t.agent, "var(--slot-5)")}` : ""}
+          </div>
+          ${attrs ? `<div class="attr-row">${attrs}</div>` : ""}
+        </div>`;
+    }).join("");
+    return `<div style="margin-bottom:14px"><div class="sentence-text" style="color:var(--ink-3);font-size:12.5px;margin-bottom:6px">${esc(sf.sentence)}</div>${triples}</div>`;
+  }).join("");
+  return blocks;
+}
+
+// ---- Step 3: fact table ----
+function renderFactTable(factTable) {
+  const entries = Object.entries(factTable);
+  if (!entries.length) return '<p class="empty-note">Fact table is empty.</p>';
+  const cards = entries.map(([entity, attrs]) => {
+    const attrRows = Object.entries(attrs).map(([type, vals]) => `
+      <div class="fact-attr">
+        <span class="chip type-badge" style="--chip-color:${colorVar(type)}">${esc(prettyLabel(type))}</span>
+        <div class="fact-values">${vals.map(v => chip(v, "var(--ink-3)", true)).join("")}</div>
+      </div>`).join("");
+    return `<div class="card fact-card"><h4>${esc(entity)}</h4>${attrRows || '<p class="empty-note">No typed attributes.</p>'}</div>`;
+  }).join("");
+  return `<div class="fact-grid">${cards}</div>`;
+}
+
+// ---- Step 4: candidates ----
+function renderCandidates(candidates) {
+  if (!candidates.length) return '<p class="empty-note">No " or " comparison found in the question &mdash; nothing to compare.</p>';
+  return `<div class="vs-row">
+    <div class="vs-box">${esc(candidates[0])}</div>
+    <div class="vs-divider">OR</div>
+    <div class="vs-box">${esc(candidates[1] ?? "?")}</div>
+  </div>`;
+}
+
+// ---- Step 5: attribute + direction inference ----
+function renderInference(trace) {
+  const conf = trace.confidence;
+  const confPct = conf === null || conf === undefined ? 0 : Math.max(0, Math.min(1, conf)) * 100;
+  return `<div class="meta-grid">
+    <div class="card">
+      <div class="meta-label">What we're comparing</div>
+      <div class="meta-value">${trace.attribute_type_used ? chip(prettyLabel(trace.attribute_type_used), colorVar(trace.attribute_type_used)) : '<span class="empty-note">none</span>'}</div>
+      <div class="meta-sub">guessed from the word &ldquo;${esc(trace.inferred_from_word ?? "?")}&rdquo;</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${confPct}%"></div></div>
+      <div class="meta-sub">${pct(conf)} match</div>
+    </div>
+    <div class="card">
+      <div class="meta-label">Which one wins</div>
+      <div class="meta-value">${chip(trace.direction === "min" ? "Earliest / smallest" : "Latest / largest", "var(--ink-3)", true)}</div>
+    </div>
+  </div>`;
+}
+
+// ---- Step 6: candidate linking ----
+function renderLinking(trace) {
+  const entries = Object.entries(trace.linked_entities || {});
+  if (!entries.length) return '<p class="empty-note">No candidates to link.</p>';
+  const rows = entries.map(([cand, info]) => {
+    if (!info.linked_key) {
+      return `<div class="link-row"><div class="link-name">${esc(cand)}</div><span class="link-arrow">&rarr;</span><span class="no-match">&#9888; no match found in the text</span></div>`;
+    }
+    const barWidth = (info.similarity ?? 0) * 100;
+    return `<div class="link-row">
+      <div class="link-name">${esc(cand)}</div>
+      <span class="link-arrow">&rarr;</span>
+      <div class="link-target">${esc(info.linked_key)}</div>
+      <div style="flex:1;min-width:100px">
+        <div class="bar-track"><div class="bar-fill" style="width:${barWidth}%"></div></div>
+      </div>
+      <div class="meta-sub" style="width:70px;text-align:right">${pct(info.similarity)} match</div>
+    </div>`;
+  }).join("");
+  return `<div class="card">${rows}</div>`;
+}
+
+// ---- Step 7: value comparison ----
+function renderValueComparison(trace) {
+  const rawEntries = Object.entries(trace.raw_values || {});
+  if (!rawEntries.length) return '<p class="empty-note">No values extracted.</p>';
+
+  const sortKeys = rawEntries.map(([, v]) => v.parsed.map(p => p.sort_key).filter(s => s !== null)).flat();
+  const maxKey = sortKeys.length ? Math.max(...sortKeys.map(Math.abs), 1) : 1;
+  const colors = ["var(--slot-1)", "var(--slot-2)", "var(--slot-6)", "var(--slot-3)"];
+
+  const bars = rawEntries.map(([cand, v], i) => {
+    const usable = v.parsed.filter(p => p.sort_key !== null);
+    const chosen = usable.length ? usable[0].sort_key : null;
+    const width = chosen === null ? 0 : Math.max(4, (Math.abs(chosen) / maxKey) * 100);
+    const rawChips = v.raw_values.length
+      ? v.raw_values.map(rv => chip(rv, "var(--ink-3)", true)).join(" ")
+      : '<span class="empty-note">none found</span>';
+    return `
+      <div style="margin-bottom:12px">
+        <div class="meta-sub" style="margin-bottom:4px">${esc(cand)} &mdash; written as: ${rawChips}</div>
+        <div class="compare-bar-row">
+          <div class="compare-label">${esc(cand)}</div>
+          <div class="compare-track"><div class="compare-fill" style="width:${width}%;background:${colors[i % colors.length]}"></div></div>
+          <div class="compare-value">${chosen === null ? "n/a" : chosen}</div>
+        </div>
+      </div>`;
+  }).join("");
+  return `<div class="card">${bars}</div>`;
+}
+
+// ---- Direct-mode step: question parsing (wh-word / predicate / entity span) ----
+function renderQuestionParsingDirect(trace) {
+  return `<div class="meta-grid">
+    <div class="card">
+      <div class="meta-label">What kind of answer you want</div>
+      <div class="meta-value">${trace.wh_attribute ? chip(prettyLabel(trace.wh_attribute), colorVar(trace.wh_attribute)) : '<span class="empty-note">none</span>'}</div>
+    </div>
+    <div class="card">
+      <div class="meta-label">Action word in your question</div>
+      <div class="meta-value">${trace.question_predicate ? chip(trace.question_predicate, "var(--ink-3)", true) : '<span class="empty-note">none</span>'}</div>
+    </div>
+    <div class="card">
+      <div class="meta-label">Who/what it's about</div>
+      <div class="meta-value">${trace.question_entity_span ? chip(trace.question_entity_span, "var(--slot-1)") : '<span class="empty-note">none</span>'}</div>
+    </div>
+  </div>`;
+}
+
+// ---- Direct-mode step: single-entity linking ----
+function renderEntityLinkingDirect(trace) {
+  if (!trace.question_entity_span) return '<p class="empty-note">No entity span to link.</p>';
+  if (!trace.linked_key) {
+    return `<div class="card"><div class="link-row">
+      <div class="link-name">${esc(trace.question_entity_span)}</div>
+      <span class="link-arrow">&rarr;</span>
+      <span class="no-match">&#9888; no match found in the text</span>
+    </div></div>`;
+  }
+  const barWidth = (trace.linked_similarity ?? 0) * 100;
+  return `<div class="card"><div class="link-row">
+    <div class="link-name">${esc(trace.question_entity_span)}</div>
+    <span class="link-arrow">&rarr;</span>
+    <div class="link-target">${esc(trace.linked_key)}</div>
+    <div style="flex:1;min-width:100px"><div class="bar-track"><div class="bar-fill" style="width:${barWidth}%"></div></div></div>
+    <div class="meta-sub" style="width:70px;text-align:right">${pct(trace.linked_similarity)} match</div>
+  </div></div>`;
+}
+
+// ---- Direct-mode step: question predicate matched against entity's triples ----
+function renderPredicateMatching(trace) {
+  const triples = trace.candidate_triples || [];
+  if (!triples.length) return '<p class="empty-note">No facts found for this entity.</p>';
+  const matched = trace.matched_triple;
+  const rows = triples.map(t => {
+    const isMatch = !!matched && t.sentence === matched.sentence && t.predicate === matched.predicate;
+    const barWidth = (t.predicate_similarity ?? 0) * 100;
+    const attrChips = Object.entries(t.attributes || {})
+      .map(([type, vals]) => chip(`${prettyLabel(type)}: ${vals.join(", ")}`, colorVar(type)))
+      .join(" ");
+    return `<div class="card" style="${isMatch ? "box-shadow:0 0 0 2px var(--good)" : ""}">
+      <div class="triple-flow">
+        ${chip(t.predicate, isMatch ? "var(--good)" : "var(--ink-3)", !isMatch)}
+        <span class="meta-sub" style="margin:0">how well this matches &ldquo;${esc(trace.question_predicate ?? "?")}&rdquo;</span>
+        <span class="meta-sub" style="margin:0;margin-left:auto">${pct(t.predicate_similarity)}</span>
+      </div>
+      <div class="bar-track" style="margin-top:6px"><div class="bar-fill" style="width:${barWidth}%;background:${isMatch ? "var(--good)" : "var(--accent)"}"></div></div>
+      <div class="meta-sub" style="margin-top:4px">${esc(t.sentence)}</div>
+      ${attrChips ? `<div class="attr-row">${attrChips}</div>` : ""}
+      ${isMatch ? '<div class="meta-sub" style="margin-top:6px;color:var(--good);font-weight:700">&#10003; this is the fact that answers your question</div>' : ""}
+    </div>`;
+  }).join("");
+  return rows;
+}
+
+const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>';
+const ICON_WARNING = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5 L21.5 20 H2.5 Z"/><line x1="12" y1="10" x2="12" y2="14.5"/><circle cx="12" cy="17.5" r="0.6" fill="currentColor" stroke="none"/></svg>';
+
+// ---- Step 8: final answer ----
+function renderFinal(trace) {
+  if (trace.answerable) {
+    return `<div class="final-card good">
+      <div class="final-icon-badge">${ICON_CHECK}</div>
+      <div>
+        <div class="final-title">Answer</div>
+        <div class="final-answer">${esc(trace.answer)}</div>
+      </div>
+    </div>`;
+  }
+  return `<div class="final-card critical">
+    <div class="final-icon-badge">${ICON_WARNING}</div>
+    <div>
+      <div class="final-title">Not answerable</div>
+      <div class="final-reason">${esc(trace.reason || "Unknown reason")}</div>
+    </div>
+  </div>`;
+}
+
+// ---- Knowledge graph (entities + attributes + question intent), rendered with Cytoscape.js ----
+function buildGraphElements(decompose, trace) {
+  const nodes = new Map();
+  const edges = [];
+  const highlight = new Set();
+
+  function addNode(id, label, type, attrType) {
+    if (!nodes.has(id)) nodes.set(id, { id, label, type, attrType });
+  }
+
+  // Edges are sourced from the individual triples (not the flattened fact
+  // table) so each edge is labeled with its real predicate ("build" /
+  // "renovate") -- this is what lets the graph show which date came from
+  // which fact, instead of collapsing them into one generic "DATE" edge.
+  decompose.sentence_facts.forEach(sf => {
+    sf.triples.forEach(t => {
+      if (!t.subject) return;
+      const entityId = "entity:" + t.subject;
+      addNode(entityId, t.subject, "entity");
+      Object.entries(t.attributes || {}).forEach(([attrType, values]) => {
+        values.forEach(value => {
+          const valueId = "value:" + attrType + ":" + value;
+          addNode(valueId, value, "value", attrType);
+          edges.push({ id: `e_${entityId}_${valueId}`, source: entityId, target: valueId, label: t.predicate, attrType, kind: "attribute" });
+        });
+      });
+    });
+  });
+
+  if (trace.mode === "direct") {
+    const intentLabel = [trace.wh_attribute || "?", trace.question_predicate || ""].filter(Boolean).join(" · ");
+    addNode("intent", intentLabel, "intent");
+
+    const targetId = trace.linked_key ? "entity:" + trace.linked_key : "candidate:" + (trace.question_entity_span || "?");
+    if (!nodes.has(targetId)) addNode(targetId, trace.question_entity_span || "?", "unresolved");
+    edges.push({ id: "e_intent_" + targetId, source: "intent", target: targetId, label: trace.question_entity_span || "", kind: "intent" });
+
+    if (trace.answerable && trace.matched_triple) {
+      highlight.add(targetId);
+      const attrs = trace.matched_triple.attributes || {};
+      Object.entries(attrs).forEach(([attrType, values]) => {
+        values.forEach(v => highlight.add("value:" + attrType + ":" + v));
+      });
+    }
+  } else if (trace.candidates && trace.candidates.length) {
+    const intentLabel = [trace.attribute_type_used || "?", trace.direction === "min" ? "MIN" : "MAX"].join(" · ");
+    addNode("intent", intentLabel, "intent");
+
+    Object.entries(trace.linked_entities || {}).forEach(([candidate, info], i) => {
+      const targetId = info.linked_key ? "entity:" + info.linked_key : "candidate:" + candidate;
+      if (!nodes.has(targetId)) addNode(targetId, candidate, "unresolved");
+      edges.push({ id: "e_intent_" + i + "_" + targetId, source: "intent", target: targetId, label: candidate, kind: "intent" });
+
+      if (trace.answerable && trace.answer === candidate) {
+        highlight.add(targetId);
+        const raw = (trace.raw_values && trace.raw_values[candidate]) || null;
+        const targetSortKey = trace.values ? trace.values[candidate] : null;
+        if (raw && targetSortKey !== null && targetSortKey !== undefined) {
+          const match = raw.parsed.find(p => p.sort_key === targetSortKey);
+          if (match) highlight.add("value:" + trace.attribute_type_used + ":" + match.value);
+        }
+      }
+    });
+  }
+
+  return { nodeList: [...nodes.values()], edges, highlight };
+}
+
+function currentPalette() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = name => cs.getPropertyValue(name).trim();
+  return {
+    slot: { 1: v("--slot-1"), 2: v("--slot-2"), 3: v("--slot-3"), 4: v("--slot-4"), 5: v("--slot-5"), 6: v("--slot-6"), 7: v("--slot-7"), 8: v("--slot-8") },
+    good: v("--good"),
+    critical: v("--critical"),
+    surface: v("--surface"),
+    page: v("--page"),
+    textPrimary: v("--ink"),
+    textSecondary: v("--ink-2"),
+    textMuted: v("--ink-3"),
+  };
+}
+
+function slotColorFor(label, palette) {
+  return palette.slot[ENTITY_SLOT[label] || 8];
+}
+
+const GRAPH_LEGEND_HTML = `<div class="graph-legend">
+  <span class="legend-item"><span class="legend-swatch" style="background:var(--slot-1);border-radius:3px"></span>A thing (square)</span>
+  <span class="legend-item"><span class="legend-swatch circle" style="background:var(--slot-3)"></span>A fact about it (colored circle)</span>
+  <span class="legend-item"><span class="legend-swatch diamond" style="background:var(--slot-5)"></span>Your question</span>
+  <span class="legend-item"><span class="legend-swatch circle" style="background:var(--critical)"></span>Not found in the text</span>
+  <span class="legend-item"><span class="legend-swatch circle" style="background:transparent;border:2px dashed var(--good)"></span>The answer</span>
+  <span class="legend-item"><span class="legend-line"></span>knows this fact</span>
+  <span class="legend-item"><span class="legend-line dashed"></span>your question is about this</span>
+</div>`;
+
+let cyInstance = null;
+
+function renderCytoscapeGraph(decompose, trace) {
+  document.getElementById("graphLegend").innerHTML = GRAPH_LEGEND_HTML;
+
+  const container = document.getElementById("cy");
+  const { nodeList, edges, highlight } = buildGraphElements(decompose, trace);
+
+  if (cyInstance) { cyInstance.destroy(); cyInstance = null; }
+
+  if (!nodeList.length) {
+    container.innerHTML = '<p class="empty-note" style="padding:16px">Nothing to graph yet.</p>';
+    return;
+  }
+  container.innerHTML = "";
+
+  const palette = currentPalette();
+  const fillFor = ele => {
+    const type = ele.data("type");
+    if (type === "entity") return palette.slot[1];
+    if (type === "intent") return palette.slot[5];
+    if (type === "unresolved") return palette.critical;
+    return slotColorFor(ele.data("attrType"), palette);
+  };
+  const edgeColorFor = ele => (ele.data("kind") === "intent" ? palette.textMuted : slotColorFor(ele.data("attrType"), palette));
+
+  const elements = [
+    ...nodeList.map(n => ({
+      data: { id: n.id, label: n.label, type: n.type, attrType: n.attrType || null },
+      classes: [n.type, highlight.has(n.id) ? "answer" : ""].filter(Boolean).join(" "),
+    })),
+    ...edges.map(e => ({
+      data: { id: e.id, source: e.source, target: e.target, label: e.label, attrType: e.attrType || null, kind: e.kind },
+      classes: e.kind,
+    })),
+  ];
+
+  cyInstance = cytoscape({
+    container,
+    elements,
+    wheelSensitivity: 0.25,
+    minZoom: 0.4,
+    maxZoom: 2.5,
+    style: [
+      { selector: "node", style: {
+          "background-color": fillFor,
+          "label": "data(label)",
+          "color": palette.textPrimary,
+          "font-size": 10,
+          "font-weight": 600,
+          "text-wrap": "wrap",
+          "text-max-width": "90px",
+          "text-valign": "bottom",
+          "text-margin-y": 8,
+          "text-outline-color": palette.surface,
+          "text-outline-width": 3,
+          "border-width": 3,
+          "border-color": palette.surface,
+          "width": 34,
+          "height": 34,
+      } },
+      { selector: "node.entity", style: { shape: "round-rectangle", width: 46, height: 46 } },
+      { selector: "node.intent", style: { shape: "diamond", width: 56, height: 56 } },
+      { selector: "node.value", style: { shape: "ellipse", width: 30, height: 30 } },
+      { selector: "node.unresolved", style: { shape: "ellipse", "border-style": "dashed" } },
+      { selector: "node.answer", style: {
+          "border-color": palette.good,
+          "border-style": "dashed",
+          "border-width": 3.5,
+          "font-weight": 800,
+      } },
+      { selector: "edge", style: {
+          "width": 2,
+          "line-color": edgeColorFor,
+          "target-arrow-color": edgeColorFor,
+          "target-arrow-shape": "triangle",
+          "arrow-scale": 1,
+          "curve-style": "bezier",
+          "label": "data(label)",
+          "font-size": 9,
+          "color": palette.textSecondary,
+          "text-background-color": palette.surface,
+          "text-background-opacity": 1,
+          "text-background-padding": "2px",
+          "text-rotation": "autorotate",
+      } },
+      { selector: "edge.intent", style: {
+          "line-style": "dashed",
+          "line-color": palette.textMuted,
+          "target-arrow-color": palette.textMuted,
+      } },
+    ],
+    layout: {
+      name: "breadthfirst",
+      directed: true,
+      roots: nodeList.some(n => n.id === "intent") ? "#intent" : undefined,
+      spacingFactor: 1.35,
+      padding: 28,
+      animate: true,
+      animationDuration: 350,
+    },
+  });
+
+  const tooltip = document.getElementById("cyTooltip");
+  cyInstance.on("mouseover", "node", evt => {
+    const n = evt.target;
+    const typeTag = n.hasClass("value") ? prettyLabel(n.data("attrType"))
+      : n.data("type") === "intent" ? "your question"
+      : n.data("type") === "unresolved" ? "not found in the text"
+      : "entity";
+    tooltip.textContent = `${n.data("label")} (${typeTag})${n.hasClass("answer") ? " — this is the answer" : ""}`;
+    tooltip.style.display = "block";
+  });
+  cyInstance.on("mouseout", "node", () => { tooltip.style.display = "none"; });
+  cyInstance.on("mousemove", "node", evt => {
+    const pos = evt.renderedPosition || evt.position;
+    tooltip.style.left = pos.x + "px";
+    tooltip.style.top = pos.y + "px";
+  });
+}
+
+document.getElementById("resetViewBtn").addEventListener("click", () => {
+  if (cyInstance) cyInstance.fit(undefined, 30);
+});
+
+function step(num, title, sub, bodyHtml) {
+  return `<div class="step">
+    <div class="step-num">${num}</div>
+    <div class="step-title">${esc(title)}</div>
+    ${sub ? `<span class="step-sub">${esc(sub)}</span>` : ""}
+    ${bodyHtml}
+  </div>`;
+}
+
+function renderResults(data) {
+  const { decompose, answer_extraction } = data;
+  const blocks = [
+    ["Read the text", "Splits the passage into sentences and highlights names, dates, places, and other details it recognizes.", renderEntitiesStep(decompose.sentence_facts)],
+    ["Find the facts", "For each sentence, works out who or what did something, and to what — subject → action → object.", renderTriplesStep(decompose.sentence_facts)],
+    ["Build a fact sheet", "Collects everything learned about each entity into one place, ready to search.", renderFactTable(decompose.fact_table)],
+  ];
+
+  if (answer_extraction.mode === "direct") {
+    blocks.push(
+      ["Understand the question", "Works out what kind of answer you want, which action word matters, and who or what it's about.", renderQuestionParsingDirect(answer_extraction)],
+      ["Match the name", "Links the entity in your question to the matching one in the fact sheet.", renderEntityLinkingDirect(answer_extraction)],
+      ["Find the right fact", "Checks every fact about that entity and picks the one whose action matches your question.", renderPredicateMatching(answer_extraction)],
+      ["Final answer", "The answer, based on everything above.", renderFinal(answer_extraction)],
+    );
+  } else {
+    blocks.push(
+      ["Spot what's being compared", "Finds the two things your question is comparing — the parts on either side of “or”.", renderCandidates(answer_extraction.candidates)],
+      ["Work out what you're asking", "Guesses which detail matters (like a date) and whether you want the earliest or the latest.", renderInference(answer_extraction)],
+      ["Match names to facts", "Links each thing in your question to the matching entity in the fact sheet.", renderLinking(answer_extraction)],
+      ["Compare the values", "Reads off each side's value and compares them to see which one wins.", renderValueComparison(answer_extraction)],
+      ["Final answer", "The answer, based on everything above.", renderFinal(answer_extraction)],
+    );
+  }
+
+  const html = blocks.map(([title, sub, body], i) => step(i + 1, title, sub, body)).join("");
+  document.getElementById("stepsCol").innerHTML = html;
+  document.getElementById("results").style.display = "grid";
+
+  renderCytoscapeGraph(decompose, answer_extraction);
+}
+
+const inputPanelWrap = document.getElementById("inputPanelWrap");
+const inputRecapWrap = document.getElementById("inputRecapWrap");
+const recapQuestion = document.getElementById("recapQuestion");
+
+function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+function collapseInputPanel(question) {
+  recapQuestion.textContent = truncate(question, 100);
+  inputPanelWrap.classList.add("is-hidden");
+  inputRecapWrap.classList.remove("is-hidden");
+}
+function expandInputPanel() {
+  inputRecapWrap.classList.add("is-hidden");
+  inputPanelWrap.classList.remove("is-hidden");
+}
+document.getElementById("editInputsBtn").addEventListener("click", expandInputPanel);
+
+async function analyze() {
+  const knowledge = document.getElementById("knowledge").value.trim();
+  const question = document.getElementById("question").value.trim();
+  const errorBanner = document.getElementById("errorBanner");
+  const btn = document.getElementById("analyzeBtn");
+  errorBanner.style.display = "none";
+
+  if (!knowledge || !question) {
+    errorBanner.textContent = "Please provide both a knowledge paragraph and a question.";
+    errorBanner.style.display = "block";
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Analyzing...';
+  try {
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ knowledge, question }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Request failed with status ${res.status}`);
+    }
+    const data = await res.json();
+    renderResults(data);
+    collapseInputPanel(question);
+  } catch (err) {
+    errorBanner.textContent = "Error: " + err.message;
+    errorBanner.style.display = "block";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Analyze";
+  }
+}
+
+document.getElementById("analyzeBtn").addEventListener("click", analyze);
+
+// Every example here was run through the real pipeline first (fact_decompose.py +
+// answer_extractor.py, scanned from RAG/experiment_data.json) and confirmed to
+// produce the correct answer -- unlike HotpotQA's multi-hop "bridge" questions,
+// which this single-hop algorithm can't solve (see conversation history).
+const EXAMPLES = [
+  {
+    mode: "comparison",
+    label: "Arthur's Magazine vs. First for Women",
+    knowledge: "Arthur's Magazine (1844-1846) was an American literary periodical published in Philadelphia in the 19th century. First for Women is a woman's magazine published by Bauer Media Group in the USA.",
+    question: "Which magazine was started first Arthur's Magazine or First for Women?",
+  },
+  {
+    mode: "comparison",
+    label: "The Hunchback of Notre Dame vs. Saludos Amigos",
+    knowledge: "The Hunchback of Notre Dame is a 1996 American animated musical drama film produced by Walt Disney Feature Animation for Walt Disney Pictures.Saludos Amigos (Spanish for \"Greetings, Friends\") is a 1942 American live-action animated package film produced by Walt Disney and released by RKO Radio Pictures.",
+    question: "Which movie was released first, The Hunchback of Notre Dame or Saludos Amigos?",
+  },
+  {
+    mode: "comparison",
+    label: "Snow Dogs vs. Sacred Planet",
+    knowledge: "Snow Dogs is a 2002 American Northern adventure comedy film directed by Brian Levant, and starring Cuba Gooding Jr. and James Coburn.Sacred Planet is a 2004 documentary directed by Jon Long and Hairul Salleh Askor.",
+    question: "Which movie came out first, Snow Dogs or Sacred Planet?",
+  },
+  {
+    mode: "comparison",
+    label: "Hinder vs. The Fatima Mansions",
+    knowledge: "Hinder is an American rock band from Oklahoma that was formed in 2001 by lead singer Austin Winkler, lead guitarist Joe \"Blower\" Garvey, and drummer Cody Hanson.The Fatima Mansions were an art rock group formed in 1988 by Cork singer/keyboardist Cathal Coughlan, formerly of Microdisney.",
+    question: "Which rock band was formed earlier, Hinder or The Fatima Mansions?",
+  },
+  {
+    mode: "comparison",
+    label: "Muppet Treasure Island vs. Honey, I Shrunk the Kids",
+    knowledge: "Muppet Treasure Island is a 1996 American musical adventure comedy film based on Robert Louis Stevenson's \"Treasure Island\".Honey, I Shrunk the Kids is a 1989 American comic science fiction film.",
+    question: "What movie was produced first, Muppet Treasure Island or Honey, I Shrunk the Kids?",
+  },
+  {
+    mode: "direct",
+    label: "Taj Mahal renovation date",
+    knowledge: "Taj Mahal was built in 1999. Taj Mahal was renovated in 2000.",
+    question: "When was Taj Mahal renovated?",
+  },
+  {
+    mode: "direct",
+    label: "The Messenger's lead actor",
+    knowledge: "The Messenger is a 2015 British supernatural mystery horror film directed by David Blair, written by Andrew Kirk and starring Robert Sheehan and Lily Cole.Robert Michael Sheehan (Irish: \"Roibeárd Mícheál Ó Siodhacháin\"; born 7 January 1988) is an Irish actor.",
+    question: "What male actor starred in The Messenger?",
+  },
+  {
+    mode: "direct",
+    label: "Oldest of the Van Dyke family",
+    knowledge: "She was the daughter of actor Jerry Van Dyke, niece of the actor Dick Van Dyke, and cousin once removed of Shane Van Dyke.Jerry Van Dyke (born July 27, 1931) is an American comedian and actor, the younger brother of Dick Van Dyke.",
+    question: "Who is the oldest of the Van Dyke family?",
+  },
+  {
+    mode: "direct",
+    label: "City of Lewis Moran's murder",
+    knowledge: "His murder occurred one week after the funeral of fellow Melbourne underworld criminal and suspected hitman Andrew Veniamin.Andrew \"Benji\" Veniamin (16 November 1975 - 23 March 2004) was an Australian criminal from Melbourne, Victoria, Australia.",
+    question: "Lewis Moran was murdered a week after the death of the hitman from what Australian city?",
+  },
+  {
+    mode: "direct",
+    label: "Kevin Quinn's Disney spinoff show",
+    knowledge: "He is known for his starring role in the Disney Channel original series \"Bunk'd\", and his supporting role in the 2016 Disney Channel Original Movie \"Adventures in Babysitting\". The series is a spinoff of \"Jessie\" and stars Peyton List, Karan Brar, Skai Jackson, Miranda May, Kevin Quinn, Nathan Arenas, and Nina Lu.",
+    question: "Kevin Quinn starred in a Disney channel series which was a spinoff of what show?",
+  },
+  {
+    mode: "direct",
+    label: "NBA commissioner after David Stern",
+    knowledge: "The current commissioner is Adam Silver after he succeeded David Stern on February 1, 2014.Adam Silver (born April 25, 1962) is an American lawyer and businessman, who is currently the commissioner of the National Basketball Association (NBA).",
+    question: "What American lawyer and businessman succeeded David Stern to be the Commissioner of the NBA?",
+  },
+  {
+    mode: "direct",
+    label: "Tove Jansson's first art exhibition",
+    knowledge: "Comet in Moominland (Swedish: \"Kometjakten\" / \"Mumintrollet på kometjakt\" / \"Kometen kommer\") is the second in Tove Jansson's series of Moomin books. Her first solo art exhibition was in 1943.",
+    question: "When was the first solo art exhibition of the author of the book Comet in Moominland?",
+  },
+];
+
+const exampleSelect = document.getElementById("exampleSelect");
+const comparisonGroup = document.createElement("optgroup");
+comparisonGroup.label = "Comparison examples";
+const directGroup = document.createElement("optgroup");
+directGroup.label = "Direct-lookup examples";
+EXAMPLES.forEach((ex, i) => {
+  const opt = document.createElement("option");
+  opt.value = String(i);
+  opt.textContent = ex.label;
+  (ex.mode === "comparison" ? comparisonGroup : directGroup).appendChild(opt);
+});
+exampleSelect.appendChild(comparisonGroup);
+exampleSelect.appendChild(directGroup);
+
+function loadExample(i) {
+  const ex = EXAMPLES[i];
+  if (!ex) return;
+  document.getElementById("knowledge").value = ex.knowledge;
+  document.getElementById("question").value = ex.question;
+}
+
+exampleSelect.addEventListener("change", () => {
+  if (exampleSelect.value === "") return;
+  loadExample(Number(exampleSelect.value));
+  exampleSelect.value = "";
+});
+
+const autoParam = new URLSearchParams(location.search).get("auto");
+if (autoParam === "1" || autoParam === "direct" || /^\d+$/.test(autoParam || "")) {
+  const index = autoParam === "1" ? 0 : autoParam === "direct" ? 5 : Number(autoParam);
+  loadExample(index);
+  analyze().then(() => {
+    if (new URLSearchParams(location.search).get("edit") === "1") {
+      document.getElementById("editInputsBtn").click();
+    }
+  });
+}
+</script>
+</body>
+</html>
